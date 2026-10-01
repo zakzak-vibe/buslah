@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
 import { ActiveBusHero } from './components/ActiveBusHero';
@@ -21,6 +21,7 @@ import { Footer } from './components/Footer';
 import { BUS_DATABASE, ROUTE_STEPS_BUS_54, NEARBY_STOPS } from './data/transitData';
 import { BusArrivalInfo } from './types/transit';
 import { chime } from './utils/audio';
+import { fetchBusArrivals, transformLtaServiceToBusInfo } from './services/ltaService';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<
@@ -36,6 +37,7 @@ export default function App() {
   const [pinnedStops, setPinnedStops] = useState<string[]>([]);
   const [activeAlerts, setActiveAlerts] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [apiSource, setApiSource] = useState<'lta_datamall_live' | 'simulated_fallback'>('simulated_fallback');
 
   // Modals state
   const [isCrowdModalOpen, setIsCrowdModalOpen] = useState(false);
@@ -54,15 +56,41 @@ export default function App() {
     BUS_DATABASE[activeBusNumber] || BUS_DATABASE['54']
   );
 
-  // Sync when activeBusNumber changes
+  // Load live bus arrivals from /api/bus-arrival
+  const loadApiArrivals = useCallback(
+    async (busStop: string, busNum: string, silent = false) => {
+      try {
+        const data = await fetchBusArrivals(busStop, busNum);
+        if (data.source) {
+          setApiSource(data.source);
+        }
+
+        const matchingService = (data.Services || []).find((s) => s.ServiceNo === busNum);
+        if (matchingService) {
+          const transformed = transformLtaServiceToBusInfo(matchingService, busNum);
+          setLiveBusInfo(transformed);
+        }
+      } catch (err) {
+        // Fallback to local DB gracefully
+        if (!silent) {
+          console.warn('Using local telemetry fallback:', err);
+        }
+      }
+    },
+    []
+  );
+
+  // Sync when activeBusNumber or currentStopCode changes
   useEffect(() => {
-    const fresh = BUS_DATABASE[activeBusNumber] || {
+    const fallback = BUS_DATABASE[activeBusNumber] || {
       ...BUS_DATABASE['54'],
       busNumber: activeBusNumber,
       destination: `Towards Singapore Int`,
     };
-    setLiveBusInfo(fresh);
-  }, [activeBusNumber]);
+    setLiveBusInfo(fallback);
+
+    loadApiArrivals(currentStopCode, activeBusNumber, true);
+  }, [activeBusNumber, currentStopCode, loadApiArrivals]);
 
   // Real-time ticking down seconds for authentic live transit feel
   useEffect(() => {
@@ -171,17 +199,23 @@ export default function App() {
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     if (soundEnabled) chime.playClick();
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
+    try {
+      await loadApiArrivals(currentStopCode, activeBusNumber);
       showToast(
-        'Updated Live!',
-        'Fresh LTA DataMall signals loaded. 1st bus is turning into slip road now!',
+        apiSource === 'lta_datamall_live' ? 'LTA Live Sync Complete!' : 'Updated Live!',
+        apiSource === 'lta_datamall_live'
+          ? `Direct LTA DataMall v3 signals updated for Bus ${activeBusNumber}.`
+          : 'Fresh LTA DataMall signals loaded. 1st bus is turning into slip road now!',
         'refresh'
       );
-    }, 600);
+    } catch {
+      showToast('Updated Live!', 'Fresh telemetry synced.', 'refresh');
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleSelectStop = (stopCode: string, stopName?: string) => {

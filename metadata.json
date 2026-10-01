@@ -1,0 +1,6 @@
+{
+  "name": "BusLah! - Singapore Live Bus Arrivals & Transit Map",
+  "description": "Singapore real-time bus arrivals, live route radar, crowd telemetry, and MRT feeder transit intelligence with authentic Singlish commuter tips.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

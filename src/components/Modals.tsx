@@ -190,6 +190,7 @@ interface SettingsModalProps {
   onToggleSound: () => void;
   autoRefreshInterval: number;
   onChangeRefreshInterval: (seconds: number) => void;
+  onKeyUpdated?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -199,18 +200,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleSound,
   autoRefreshInterval,
   onChangeRefreshInterval,
+  onKeyUpdated,
 }) => {
+  const [apiKeyInput, setApiKeyInput] = React.useState('');
+  const [isTesting, setIsTesting] = React.useState(false);
+  const [healthStatus, setHealthStatus] = React.useState<any>(null);
+  const [saveSuccess, setSaveSuccess] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      try {
+        const stored = localStorage.getItem('buslah_lta_account_key') || '';
+        setApiKeyInput(stored);
+      } catch {
+        // ignore
+      }
+      checkHealth();
+    }
+  }, [isOpen]);
+
+  const checkHealth = async () => {
+    setIsTesting(true);
+    try {
+      const headers: Record<string, string> = {};
+      const stored = localStorage.getItem('buslah_lta_account_key');
+      if (stored) headers['x-lta-account-key'] = stored;
+      const res = await fetch('/api/health', { headers });
+      const data = await res.json();
+      setHealthStatus(data);
+    } catch (e: any) {
+      setHealthStatus({ status: 'unreachable', error: e.message });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleSaveKey = () => {
+    try {
+      if (apiKeyInput.trim()) {
+        localStorage.setItem('buslah_lta_account_key', apiKeyInput.trim());
+      } else {
+        localStorage.removeItem('buslah_lta_account_key');
+      }
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2500);
+      onKeyUpdated?.();
+      checkHealth();
+    } catch {
+      // ignore
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-orange-200">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-orange-200 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-orange-100 mb-4">
           <div className="flex items-center gap-2">
             <span className="w-8 h-8 rounded-lg bg-orange-100 text-[#d95e1e] flex items-center justify-center font-bold">
               <span className="material-symbols-outlined text-[20px]">tune</span>
             </span>
-            <h3 className="text-lg font-black text-stone-900">App Preferences</h3>
+            <h3 className="text-lg font-black text-stone-900">App Preferences &amp; API Key</h3>
           </div>
           <button
             onClick={onClose}
@@ -221,6 +272,104 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-4">
+          {/* LTA DataMall Key Section */}
+          <div className="p-4 bg-gradient-to-br from-orange-50/70 to-amber-50/40 rounded-xl border border-orange-200">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs md:text-sm font-extrabold text-stone-900 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[18px] text-[#d95e1e]">key</span>
+                LTA DataMall Account Key
+              </span>
+              {healthStatus?.environment?.ltaApiKeyConfigured ? (
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                  Key Detected
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                  Key Needed
+                </span>
+              )}
+            </div>
+
+            <p className="text-[11px] text-stone-600 mb-2.5">
+              Enter your LTA DataMall Account Key below, or set it as{' '}
+              <code className="bg-white/80 px-1 py-0.5 rounded text-[#d95e1e] font-mono">
+                LTA_ACCOUNT_KEY
+              </code>{' '}
+              in your Vercel Project Settings.
+            </p>
+
+            <div className="flex gap-2 mb-2">
+              <input
+                type="text"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Paste LTA DataMall Key..."
+                className="flex-1 px-3 py-2 bg-white rounded-xl text-xs font-mono border border-orange-200 focus:outline-none focus:ring-2 focus:ring-[#d95e1e]"
+              />
+              <button
+                onClick={handleSaveKey}
+                className="px-3.5 py-2 bg-[#d95e1e] hover:bg-[#b34810] text-white text-xs font-bold rounded-xl transition shadow-xs shrink-0 cursor-pointer"
+              >
+                {saveSuccess ? 'Saved!' : 'Save Key'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] pt-1">
+              <button
+                onClick={checkHealth}
+                disabled={isTesting}
+                className="text-[#d95e1e] font-bold hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <span className={`material-symbols-outlined text-[14px] ${isTesting ? 'animate-spin' : ''}`}>
+                  refresh
+                </span>
+                <span>Test Live LTA Connection</span>
+              </button>
+
+              {apiKeyInput && (
+                <button
+                  onClick={() => {
+                    setApiKeyInput('');
+                    localStorage.removeItem('buslah_lta_account_key');
+                    onKeyUpdated?.();
+                    checkHealth();
+                  }}
+                  className="text-stone-400 hover:text-rose-600 transition"
+                >
+                  Clear key
+                </button>
+              )}
+            </div>
+
+            {/* Health status banner */}
+            {healthStatus && (
+              <div
+                className={`mt-3 p-2.5 rounded-xl border text-xs ${
+                  healthStatus.ltaDataMall?.probe?.reachable
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : healthStatus.status === 'unauthorized'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : 'bg-stone-50 border-stone-200 text-stone-700'
+                }`}
+              >
+                <div className="flex items-center justify-between font-bold mb-0.5">
+                  <span>
+                    API Status: <span className="uppercase">{healthStatus.status}</span>
+                  </span>
+                  {healthStatus.ltaDataMall?.probe?.latencyMs && (
+                    <span className="font-mono text-[10px]">
+                      {healthStatus.ltaDataMall.probe.latencyMs}ms
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] leading-snug">
+                  {healthStatus.ltaDataMall?.probe?.message || healthStatus.error || 'Ready to stream.'}
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Sound Notification Toggle */}
           <div className="flex items-center justify-between p-3 bg-stone-50 rounded-xl border border-stone-200">
             <div>
@@ -248,13 +397,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Refresh Interval */}
           <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
             <span className="text-xs md:text-sm font-bold text-stone-800 block mb-1">
-              Live Telemetry Refresh
+              Live Telemetry Refresh Interval
             </span>
             <p className="text-[11px] text-stone-500 mb-2">
-              Background frequency for syncing LTA DataMall signals
+              LTA DataMall updates feeds every 20 seconds. Recommended: 20s.
             </p>
             <div className="grid grid-cols-3 gap-2">
-              {[15, 30, 60].map((sec) => (
+              {[15, 20, 30].map((sec) => (
                 <button
                   key={sec}
                   onClick={() => onChangeRefreshInterval(sec)}
@@ -269,18 +418,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ))}
             </div>
           </div>
-
-          {/* About & Credits */}
-          <div className="p-3 bg-orange-50/60 rounded-xl border border-orange-200 text-xs text-stone-600 space-y-1">
-            <span className="font-bold text-stone-900 block">BusLah! v2.4</span>
-            <p>Built for commuters across Singapore. Real-time LTA DataMall APIs.</p>
-          </div>
         </div>
 
         <div className="mt-5 pt-3 border-t border-stone-100 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition"
+            className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer"
           >
             Save &amp; Close
           </button>

@@ -43,8 +43,10 @@ function apiDevMiddleware(): Plugin {
             query: Record<string, string>;
             method: string;
             headers: typeof req.headers;
+            url: string;
           };
           enhancedReq.query = Object.fromEntries(url.searchParams.entries());
+          enhancedReq.url = req.url || '';
 
           if (pathname === '/api/health' || pathname === '/api/health.js') {
             const healthModule = await server.ssrLoadModule('/api/health.js');

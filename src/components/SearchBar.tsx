@@ -9,6 +9,8 @@ interface SearchBarProps {
   onSwapDirection: () => void;
   direction: 1 | 2;
   availableBuses: string[];
+  apiSource?: 'lta_datamall_live' | 'simulated_fallback';
+  onOpenSettings?: () => void;
 }
 
 export const SearchBar: React.FC<SearchBarProps> = ({
@@ -20,6 +22,8 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   onSwapDirection,
   direction,
   availableBuses,
+  apiSource = 'simulated_fallback',
+  onOpenSettings,
 }) => {
   const [searchValue, setSearchValue] = useState(activeBus);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -128,31 +132,53 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             </div>
           </div>
 
-          {/* Current Bus Stop indicator */}
-          <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl border border-orange-200/90 shadow-sm shrink-0 self-start md:self-auto">
-            <span className="material-symbols-outlined text-[#d95e1e] text-[20px]">
-              location_on
-            </span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-xs md:text-sm text-stone-900 font-bold">
-                {stopName}
+          {/* Current Bus Stop indicator & Stream Status */}
+          <div className="flex items-center gap-2 flex-wrap self-start md:self-auto">
+            {apiSource === 'lta_datamall_live' ? (
+              <button
+                onClick={onOpenSettings}
+                className="px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:bg-emerald-200 transition cursor-pointer"
+                title="Direct LTA DataMall v3 Live Stream Active"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                <span>LTA Live</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenSettings}
+                className="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:bg-amber-200 transition cursor-pointer"
+                title="Click to enter or test LTA DataMall AccountKey"
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-600"></span>
+                <span>Key Setup</span>
+              </button>
+            )}
+
+            <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl border border-orange-200/90 shadow-sm shrink-0">
+              <span className="material-symbols-outlined text-[#d95e1e] text-[20px]">
+                location_on
               </span>
-              <span className="text-[11px] text-[#d95e1e] font-bold bg-orange-100/70 px-1.5 py-0.5 rounded">
-                ({stopCode})
-              </span>
-              <span className="text-stone-300">•</span>
-              <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-0.5">
-                <span className="material-symbols-outlined text-[13px]">directions_walk</span>
-                {walkTime}
-              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xs md:text-sm text-stone-900 font-bold">
+                  {stopName}
+                </span>
+                <span className="text-[11px] text-[#d95e1e] font-bold bg-orange-100/70 px-1.5 py-0.5 rounded">
+                  ({stopCode})
+                </span>
+                <span className="text-stone-300">•</span>
+                <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-0.5">
+                  <span className="material-symbols-outlined text-[13px]">directions_walk</span>
+                  {walkTime}
+                </span>
+              </div>
+              <button
+                onClick={onSwapDirection}
+                className="ml-1 text-[#d95e1e] hover:text-[#b34810] hover:bg-orange-100/60 p-1 rounded-lg transition flex items-center cursor-pointer"
+                title={`Swap Direction (Currently Dir ${direction})`}
+              >
+                <span className="material-symbols-outlined text-[18px]">swap_horiz</span>
+              </button>
             </div>
-            <button
-              onClick={onSwapDirection}
-              className="ml-1 text-[#d95e1e] hover:text-[#b34810] hover:bg-orange-100/60 p-1 rounded-lg transition flex items-center"
-              title={`Swap Direction (Currently Dir ${direction})`}
-            >
-              <span className="material-symbols-outlined text-[18px]">swap_horiz</span>
-            </button>
           </div>
         </div>
       </div>

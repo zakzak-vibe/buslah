@@ -33,20 +33,85 @@ export interface LtaServiceItem {
 
 export interface LtaArrivalResponse {
   success?: boolean;
+  liveData?: boolean;
   source?: 'lta_datamall_live' | 'simulated_fallback';
   note?: string;
   BusStopCode?: string;
   Services?: LtaServiceItem[];
   enrichedServices?: LtaServiceItem[];
   timestamp?: string;
+  error?: boolean;
+  message?: string;
 }
 
-// Convert LTA API service to frontend BusArrivalInfo model
+export const LTA_KEY_STORAGE = 'buslah_lta_account_key';
+
+export function getStoredLtaKey(): string {
+  try {
+    return localStorage.getItem(LTA_KEY_STORAGE) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveStoredLtaKey(key: string): void {
+  try {
+    if (key.trim()) {
+      localStorage.setItem(LTA_KEY_STORAGE, key.trim());
+    } else {
+      localStorage.removeItem(LTA_KEY_STORAGE);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// Convert LTA API service item to frontend BusArrivalInfo model
 export function transformLtaServiceToBusInfo(
   service: LtaServiceItem,
   busNumber: string
 ): BusArrivalInfo {
-  const fallback = BUS_DATABASE[busNumber] || BUS_DATABASE['54'];
+  const fallback = BUS_DATABASE[busNumber] || {
+    busNumber,
+    destination: `Towards Destination (${service.NextBus?.DestinationCode || 'Terminal'})`,
+    origin: `Origin (${service.NextBus?.OriginCode || 'Depot'})`,
+    operator: 'SBS Transit',
+    viaRoute: 'Direct LTA Telemetry Service Route',
+    speedKmh: 35,
+    direction: 1 as const,
+    arrivals: [
+      {
+        etaMinutes: 2,
+        etaSeconds: 30,
+        crowd: 'seats' as const,
+        crowdText: 'Seats Steady',
+        subtitle: 'Approaching stop',
+        deck: 'Double Deck' as const,
+        wab: true,
+        plateNumber: undefined,
+      },
+      {
+        etaMinutes: 10,
+        etaSeconds: 15,
+        crowd: 'standing' as const,
+        crowdText: 'Can Squeeze',
+        subtitle: '2 stops back',
+        deck: 'Single Deck' as const,
+        wab: true,
+        plateNumber: undefined,
+      },
+      {
+        etaMinutes: 22,
+        etaSeconds: 45,
+        crowd: 'seats' as const,
+        crowdText: 'Seats Avail',
+        subtitle: 'Scheduled',
+        deck: 'Double Deck' as const,
+        wab: true,
+        plateNumber: undefined,
+      },
+    ],
+  };
 
   const rawList = [service.NextBus, service.NextBus2, service.NextBus3].filter(Boolean);
 
@@ -75,7 +140,7 @@ export function transformLtaServiceToBusInfo(
       DD: 'Double Deck',
       BD: 'Bendy',
     };
-    const deck = deckMap[bus?.Type || ''] || 'Double Deck';
+    const deck = deckMap[bus?.Type || ''] || (idx % 2 === 0 ? 'Double Deck' : 'Single Deck');
 
     const subtitle =
       idx === 0
@@ -83,6 +148,11 @@ export function transformLtaServiceToBusInfo(
           ? 'Turning into slip road now lah!'
           : `Approaching in ~${etaMin} min`
         : `Est. in ${etaMin} mins`;
+
+    const plateNumber =
+      bus?.Latitude && bus?.Longitude
+        ? `GPS: ${parseFloat(bus.Latitude).toFixed(3)}, ${parseFloat(bus.Longitude).toFixed(3)}`
+        : undefined;
 
     return {
       etaMinutes: etaMin,
@@ -92,13 +162,13 @@ export function transformLtaServiceToBusInfo(
       subtitle,
       deck,
       wab: bus?.Feature === 'WAB',
-      plateNumber: bus?.Latitude ? `LTA-GPS (${bus.Latitude.slice(0, 5)}, ${bus.Longitude?.slice(0, 7)})` : undefined,
+      plateNumber,
     };
   });
 
   // Ensure 3 arrivals array
   while (parsedList.length < 3) {
-    const defaultMins = [1, 8, 19];
+    const defaultMins = [2, 10, 22];
     parsedList.push({
       etaMinutes: defaultMins[parsedList.length],
       etaSeconds: 45,
@@ -145,14 +215,28 @@ export async function fetchBusArrivals(
     url.searchParams.set('ServiceNo', serviceNo);
   }
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      accept: 'application/json',
-    },
-  });
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+  };
+
+  const storedKey = getStoredLtaKey();
+  if (storedKey) {
+    headers['x-lta-account-key'] = storedKey;
+  }
+
+  const response = await fetch(url.toString(), { headers });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    let errMessage = `HTTP ${response.status}: ${response.statusText}`;
+    try {
+      const errJson = await response.json();
+      if (errJson?.message) {
+        errMessage = errJson.message;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(errMessage);
   }
 
   return await response.json();

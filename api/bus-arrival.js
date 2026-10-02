@@ -6,13 +6,55 @@
  *
  * Supported Query Parameters:
  *   - BusStopCode (string, required): e.g. "83139", "53379", "20251"
- *   - ServiceNo (string, optional): e.g. "15", "54", "851"
+ *   - ServiceNo (string, optional): e.g. "15", "54", "851", "176"
+ *   - AccountKey (string, optional): LTA API key override for runtime testing
  *
  * Authentication:
- *   Uses process.env.LTA_ACCOUNT_KEY configured in Vercel environment variables.
+ *   Reads process.env.LTA_ACCOUNT_KEY, process.env['<LTA_ACCOUNT_KEY>'],
+ *   or incoming header 'x-lta-account-key'.
  */
 
-// Helper to calculate minutes and seconds remaining until arrival
+function getApiKey(req) {
+  // 1. Process environment variables
+  let key =
+    process.env.LTA_ACCOUNT_KEY ||
+    process.env['<LTA_ACCOUNT_KEY>'] ||
+    process.env.VITE_LTA_ACCOUNT_KEY ||
+    process.env.ACCOUNT_KEY ||
+    process.env.lta_account_key;
+
+  // 2. Request headers
+  if (!key && req?.headers) {
+    key =
+      req.headers['x-lta-account-key'] ||
+      req.headers['accountkey'] ||
+      req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+  }
+
+  // 3. Query parameter override
+  if (!key) {
+    try {
+      const url = new URL(req.url || '', 'http://localhost:3000');
+      key =
+        url.searchParams.get('AccountKey') ||
+        url.searchParams.get('accountKey') ||
+        url.searchParams.get('apiKey') ||
+        req.query?.AccountKey ||
+        req.query?.apiKey;
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!key) return null;
+
+  return String(key)
+    .trim()
+    .replace(/^["'<]+|["'>]+$/g, '')
+    .trim();
+}
+
+// Calculate remaining minutes and seconds until arrival based on ISO 8601 timestamp
 function calculateEta(estimatedArrivalIso) {
   if (!estimatedArrivalIso) {
     return { minutes: -1, seconds: -1, isArriving: false, text: 'No Info' };
@@ -42,7 +84,7 @@ function calculateEta(estimatedArrivalIso) {
   };
 }
 
-// Convert LTA Load code to human-readable Singlish & standard format
+// Map LTA Load code to human-readable Singlish & standard format
 function parseLoad(loadCode) {
   switch (loadCode) {
     case 'SEA':
@@ -56,7 +98,7 @@ function parseLoad(loadCode) {
   }
 }
 
-// Convert LTA Type code to deck description
+// Map LTA Type code to deck description
 function parseType(typeCode) {
   switch (typeCode) {
     case 'SD':
@@ -77,20 +119,39 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, x-lta-account-key, AccountKey'
   );
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Parse query params from Vercel req.query or URL searchParams
-  const busStopCode = req.query?.BusStopCode || req.query?.busStopCode || '53379';
-  const serviceNo = req.query?.ServiceNo || req.query?.serviceNo || '';
+  // Parse query params safely from req.query or req.url
+  let busStopCode = '53379';
+  let serviceNo = '';
 
-  const apiKey = process.env.LTA_ACCOUNT_KEY;
+  try {
+    const url = new URL(req.url || '', 'http://localhost:3000');
+    busStopCode =
+      req.query?.BusStopCode ||
+      req.query?.busStopCode ||
+      url.searchParams.get('BusStopCode') ||
+      url.searchParams.get('busStopCode') ||
+      '53379';
+    serviceNo =
+      req.query?.ServiceNo ||
+      req.query?.serviceNo ||
+      url.searchParams.get('ServiceNo') ||
+      url.searchParams.get('serviceNo') ||
+      '';
+  } catch {
+    busStopCode = req.query?.BusStopCode || '53379';
+    serviceNo = req.query?.ServiceNo || '';
+  }
 
-  // Case 1: LTA_ACCOUNT_KEY is configured -> Fetch directly from LTA DataMall v3
+  const apiKey = getApiKey(req);
+
+  // Case 1: LTA_ACCOUNT_KEY is configured -> Query real LTA DataMall v3 endpoint
   if (apiKey) {
     try {
       const ltaUrl = new URL('https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival');
@@ -103,6 +164,7 @@ export default async function handler(req, res) {
         headers: {
           AccountKey: apiKey,
           accept: 'application/json',
+          'User-Agent': 'BusLah/3.0 (Singapore Real-time Bus Telemetry)',
         },
       });
 
@@ -110,8 +172,12 @@ export default async function handler(req, res) {
         const errorText = await response.text();
         return res.status(response.status).json({
           error: true,
+          liveData: false,
           status: response.status,
-          message: `LTA DataMall API error: ${response.statusText}`,
+          message:
+            response.status === 401
+              ? 'LTA DataMall rejected the AccountKey (401 Unauthorized). Verify your LTA Account Key in Vercel settings.'
+              : `LTA DataMall API error (${response.status}): ${response.statusText}`,
           details: errorText,
           source: 'lta_datamall',
         });
@@ -150,6 +216,7 @@ export default async function handler(req, res) {
 
       return res.status(200).json({
         success: true,
+        liveData: true,
         source: 'lta_datamall_live',
         BusStopCode: data.BusStopCode || busStopCode,
         Services: data.Services || [],
@@ -157,21 +224,27 @@ export default async function handler(req, res) {
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      return res.status(500).json({
+      return res.status(502).json({
         error: true,
-        message: `Failed to fetch from LTA DataMall: ${err.message}`,
+        liveData: false,
+        message: `Failed to connect to LTA DataMall: ${err.message}`,
         source: 'lta_datamall',
       });
     }
   }
 
-  // Case 2: LTA_ACCOUNT_KEY not yet configured in environment variables
-  // Return realistic mock response matching LTA DataMall v3 format and explain how to add the key
+  // Case 2: LTA_ACCOUNT_KEY not configured
+  // Provide realistic simulated telemetry so the app remains interactive,
+  // with a clear note explaining how to add the key.
   const now = Date.now();
   const targetServices = serviceNo
     ? [serviceNo]
     : busStopCode === '53379'
-    ? ['54', '13', '88', '74', '166']
+    ? ['54', '13', '88', '74', '166', '410G']
+    : busStopCode === '83139'
+    ? ['15', '150']
+    : busStopCode === '20251'
+    ? ['176']
     : ['54', '851', '13', '88'];
 
   const mockServices = targetServices.map((srv, idx) => {
@@ -241,7 +314,7 @@ export default async function handler(req, res) {
 
     return {
       ServiceNo: srv,
-      Operator: srv === '851' ? 'Tower Transit' : 'SBS Transit',
+      Operator: srv === '851' || srv === '176' ? 'SMRT' : srv === '15' ? 'Go-Ahead' : 'SBS Transit',
       NextBus: nextBus,
       NextBus2: nextBus2,
       NextBus3: nextBus3,
@@ -251,8 +324,9 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     success: true,
+    liveData: false,
     source: 'simulated_fallback',
-    note: 'LTA_ACCOUNT_KEY is not set in environment variables. Set LTA_ACCOUNT_KEY in Vercel to activate live LTA DataMall stream.',
+    note: 'LTA_ACCOUNT_KEY is not set in environment variables. Set LTA_ACCOUNT_KEY in Vercel to stream live LTA DataMall signals.',
     BusStopCode: busStopCode,
     Services: mockServices.map(({ ServiceNo, Operator, NextBus, NextBus2, NextBus3 }) => ({
       ServiceNo,

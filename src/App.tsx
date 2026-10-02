@@ -21,7 +21,11 @@ import { Footer } from './components/Footer';
 import { BUS_DATABASE, ROUTE_STEPS_BUS_54, NEARBY_STOPS } from './data/transitData';
 import { BusArrivalInfo } from './types/transit';
 import { chime } from './utils/audio';
-import { fetchBusArrivals, transformLtaServiceToBusInfo } from './services/ltaService';
+import {
+  fetchBusArrivals,
+  transformLtaServiceToBusInfo,
+  LtaServiceItem,
+} from './services/ltaService';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<
@@ -37,7 +41,10 @@ export default function App() {
   const [pinnedStops, setPinnedStops] = useState<string[]>([]);
   const [activeAlerts, setActiveAlerts] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [apiSource, setApiSource] = useState<'lta_datamall_live' | 'simulated_fallback'>('simulated_fallback');
+  const [apiSource, setApiSource] = useState<'lta_datamall_live' | 'simulated_fallback'>(
+    'simulated_fallback'
+  );
+  const [liveStopServices, setLiveStopServices] = useState<LtaServiceItem[]>([]);
 
   // Modals state
   const [isCrowdModalOpen, setIsCrowdModalOpen] = useState(false);
@@ -46,7 +53,7 @@ export default function App() {
 
   // Settings
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState(15);
+  const [refreshInterval, setRefreshInterval] = useState(20);
 
   // Toast state
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -60,20 +67,39 @@ export default function App() {
   const loadApiArrivals = useCallback(
     async (busStop: string, busNum: string, silent = false) => {
       try {
-        const data = await fetchBusArrivals(busStop, busNum);
+        const data = await fetchBusArrivals(busStop);
         if (data.source) {
           setApiSource(data.source);
         }
 
-        const matchingService = (data.Services || []).find((s) => s.ServiceNo === busNum);
-        if (matchingService) {
-          const transformed = transformLtaServiceToBusInfo(matchingService, busNum);
-          setLiveBusInfo(transformed);
+        const services = data.Services || [];
+        if (services.length > 0) {
+          setLiveStopServices(services);
+
+          const matching = services.find((s) => s.ServiceNo === busNum);
+          if (matching) {
+            const transformed = transformLtaServiceToBusInfo(matching, busNum);
+            setLiveBusInfo(transformed);
+          } else {
+            // Bus might not serve this stop, pick first active service if not silent
+            const firstSrv = services[0];
+            if (firstSrv) {
+              const transformed = transformLtaServiceToBusInfo(firstSrv, firstSrv.ServiceNo);
+              setLiveBusInfo(transformed);
+              setActiveBusNumber(firstSrv.ServiceNo);
+              if (!silent) {
+                showToast(
+                  `Bus ${firstSrv.ServiceNo} Selected`,
+                  `Bus ${busNum} does not serve stop ${busStop}. Switched to Bus ${firstSrv.ServiceNo}.`,
+                  'directions_bus'
+                );
+              }
+            }
+          }
         }
-      } catch (err) {
-        // Fallback to local DB gracefully
+      } catch (err: any) {
         if (!silent) {
-          console.warn('Using local telemetry fallback:', err);
+          showToast('Live Telemetry Notice', err.message || 'Using fallback data.', 'info');
         }
       }
     },
@@ -91,6 +117,15 @@ export default function App() {
 
     loadApiArrivals(currentStopCode, activeBusNumber, true);
   }, [activeBusNumber, currentStopCode, loadApiArrivals]);
+
+  // Continuous auto-polling every 20 seconds matching LTA DataMall refresh frequency
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      loadApiArrivals(currentStopCode, activeBusNumber, true);
+    }, refreshInterval * 1000);
+
+    return () => clearInterval(pollInterval);
+  }, [currentStopCode, activeBusNumber, refreshInterval, loadApiArrivals]);
 
   // Real-time ticking down seconds for authentic live transit feel
   useEffect(() => {
@@ -264,6 +299,8 @@ export default function App() {
               onSwapDirection={handleSwapDirection}
               direction={direction}
               availableBuses={Object.keys(BUS_DATABASE)}
+              apiSource={apiSource}
+              onOpenSettings={() => setIsSettingsModalOpen(true)}
             />
 
             {/* Main Stage Container */}
@@ -307,6 +344,7 @@ export default function App() {
                     currentBus={activeBusNumber}
                     onSelectBus={handleSelectBus}
                     stopCode={currentStopCode}
+                    liveServices={liveStopServices}
                   />
 
                   <StopAmenities stopName={currentStopName} />
@@ -355,6 +393,7 @@ export default function App() {
         onToggleSound={() => setSoundEnabled(!soundEnabled)}
         autoRefreshInterval={refreshInterval}
         onChangeRefreshInterval={(sec) => setRefreshInterval(sec)}
+        onKeyUpdated={() => loadApiArrivals(currentStopCode, activeBusNumber)}
       />
 
       {/* Toast Notification Container */}

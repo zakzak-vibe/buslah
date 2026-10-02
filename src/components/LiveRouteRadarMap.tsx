@@ -1,16 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { BusArrivalInfo } from '../types/transit';
+import { BusArrivalInfo, UserLocation } from '../types/transit';
 
 interface LiveRouteRadarMapProps {
   busInfo: BusArrivalInfo;
   onSelectStop?: (stopCode: string) => void;
   onBusMarkerClick?: () => void;
+  userLocation?: UserLocation | null;
+  isLiveGPS?: boolean;
+  onLocateMe?: () => void;
 }
 
 export const LiveRouteRadarMap: React.FC<LiveRouteRadarMapProps> = ({
   busInfo,
   onSelectStop,
   onBusMarkerClick,
+  userLocation,
+  isLiveGPS = false,
+  onLocateMe,
 }) => {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -43,8 +49,15 @@ export const LiveRouteRadarMap: React.FC<LiveRouteRadarMapProps> = ({
   const handleRecenter = () => {
     setZoomLevel(1);
     setPanOffset({ x: 0, y: 0 });
-    setActiveTooltip('Centered on Opp Blk 245 & approaching Bus');
-    setTimeout(() => setActiveTooltip(null), 3000);
+    if (onLocateMe) {
+      onLocateMe();
+    }
+    setActiveTooltip(
+      isLiveGPS
+        ? `Locked on your live GPS location (±${Math.round(userLocation?.accuracy || 12)}m)`
+        : 'Centered on Opp Blk 245 & approaching Bus'
+    );
+    setTimeout(() => setActiveTooltip(null), 3500);
   };
 
   return (
@@ -70,11 +83,31 @@ export const LiveRouteRadarMap: React.FC<LiveRouteRadarMapProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {isLiveGPS && userLocation ? (
+            <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-900 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+              <span>
+                GPS: {userLocation.latitude.toFixed(4)}°, {userLocation.longitude.toFixed(4)}° (±{Math.round(userLocation.accuracy)}m)
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={onLocateMe}
+              className="flex items-center gap-1 bg-sky-50 border border-sky-300 px-2.5 py-1 rounded-lg text-xs font-bold text-sky-800 hover:bg-sky-100 transition cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px] text-sky-600">my_location</span>
+              <span>Enable Live GPS</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-1 bg-stone-100 px-2.5 py-1 rounded-lg text-xs font-bold text-stone-700">
             <span className="material-symbols-outlined text-[16px] text-emerald-600">
               directions_walk
             </span>
-            <span>Walk: ~140m (2 min)</span>
+            <span>
+              Walk: ~{userLocation?.distanceToNearestStopMeters || 140}m (
+              {Math.max(1, Math.round((userLocation?.distanceToNearestStopMeters || 140) / 75))} min)
+            </span>
           </div>
           <div className="flex items-center gap-1 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg text-xs font-bold text-[#d95e1e]">
             <span className="material-symbols-outlined text-[16px]">sensors</span>
@@ -429,7 +462,70 @@ export const LiveRouteRadarMap: React.FC<LiveRouteRadarMapProps> = ({
               </text>
             </g>
 
-            {/* TARGET STOP PIN: Opp Blk 245 (53379) - You Are Here */}
+            {/* WALKING PATH FROM LIVE USER TO BUS STOP */}
+            <path
+              d="M 270,270 Q 305,255 340,225"
+              stroke="#0284c7"
+              strokeWidth="2.5"
+              strokeDasharray="4 4"
+              fill="none"
+              opacity="0.85"
+            />
+
+            {/* LIVE USER GPS PIN */}
+            <g
+              transform="translate(270, 270)"
+              filter="url(#markerShadow)"
+              className="cursor-pointer"
+              onClick={onLocateMe}
+            >
+              {/* Animated Pulsing GPS Waves */}
+              <circle
+                className="pulse-radar-ring"
+                fill="#0284c7"
+                fillOpacity={isLiveGPS ? '0.35' : '0.2'}
+                r={isLiveGPS ? '24' : '18'}
+              />
+              <circle fill="#FFFFFF" r="11" stroke="#0284c7" strokeWidth="3" />
+              <circle fill="#0284c7" r="5" />
+
+              {/* Callout Tag */}
+              <g transform="translate(-60, 16)">
+                <rect
+                  fill="#0F172A"
+                  height="30"
+                  rx="7"
+                  width="120"
+                  stroke="#38BDF8"
+                  strokeWidth="1.5"
+                />
+                <polygon fill="#0F172A" points="60,-4 54,0 66,0" />
+                <text
+                  fill="#38BDF8"
+                  fontFamily="Montserrat"
+                  fontSize="8.5"
+                  fontWeight="800"
+                  textAnchor="middle"
+                  x="60"
+                  y="12"
+                >
+                  {isLiveGPS ? '📍 YOU ARE HERE (LIVE GPS)' : '📍 YOU ARE HERE'}
+                </text>
+                <text
+                  fill="#FFFFFF"
+                  fontFamily="Montserrat"
+                  fontSize="8"
+                  fontWeight="700"
+                  textAnchor="middle"
+                  x="60"
+                  y="23"
+                >
+                  {userLocation?.distanceToNearestStopMeters || 140}m walk to Stop
+                </text>
+              </g>
+            </g>
+
+            {/* TARGET STOP PIN: Opp Blk 245 (53379) */}
             <g
               filter="url(#markerShadow)"
               transform="translate(340, 225)"
@@ -457,7 +553,7 @@ export const LiveRouteRadarMap: React.FC<LiveRouteRadarMapProps> = ({
                   Opp Blk 245
                 </text>
                 <text fill="#FDBA74" fontFamily="Montserrat" fontSize="10" fontWeight="700" x="12" y="40">
-                  Stop 53379 • YOU ARE HERE
+                  Stop 53379 • Bus Boarding Point
                 </text>
               </g>
             </g>

@@ -26,6 +26,7 @@ import {
   transformLtaServiceToBusInfo,
   LtaServiceItem,
 } from './services/ltaService';
+import { useUserLocation } from './hooks/useUserLocation';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<
@@ -36,6 +37,15 @@ export default function App() {
   const [currentStopCode, setCurrentStopCode] = useState('53379');
   const [currentStopName, setCurrentStopName] = useState('Opp Blk 245');
   const [direction, setDirection] = useState<1 | 2>(1);
+
+  // Live GPS geolocation hook
+  const {
+    location: userLocation,
+    isLocating,
+    isLiveGPS,
+    errorMessage: gpsError,
+    requestCurrentLocation,
+  } = useUserLocation();
 
   // Bookmarking & Alert states
   const [pinnedStops, setPinnedStops] = useState<string[]>([]);
@@ -268,6 +278,16 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleLocateMe = () => {
+    if (soundEnabled) chime.playClick();
+    requestCurrentLocation();
+    showToast(
+      'Acquiring Live GPS...',
+      'Locating your device in Singapore to sync nearest bus stops.',
+      'my_location'
+    );
+  };
+
   const isCurrentPinned = pinnedStops.includes(`${activeBusNumber}-${currentStopCode}`);
   const isCurrentAlert = activeAlerts.includes(activeBusNumber);
 
@@ -283,6 +303,10 @@ export default function App() {
         }}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         currentLocationText={`Near ${currentStopName} (${currentStopCode})`}
+        userLocation={userLocation}
+        isLocating={isLocating}
+        isLiveGPS={isLiveGPS}
+        onLocateMe={handleLocateMe}
       />
 
       {/* Main Content Area */}
@@ -295,13 +319,50 @@ export default function App() {
               onSelectBus={handleSelectBus}
               stopName={currentStopName}
               stopCode={currentStopCode}
-              walkTime="~2 min walk"
+              walkTime={
+                userLocation?.distanceToNearestStopMeters
+                  ? `~${Math.max(1, Math.round(userLocation.distanceToNearestStopMeters / 75))} min walk`
+                  : '~2 min walk'
+              }
               onSwapDirection={handleSwapDirection}
               direction={direction}
               availableBuses={Object.keys(BUS_DATABASE)}
               apiSource={apiSource}
               onOpenSettings={() => setIsSettingsModalOpen(true)}
             />
+
+            {/* Live GPS Nearest Stop Suggestion Banner (if user GPS is locked near another stop) */}
+            {isLiveGPS &&
+              userLocation?.nearestStopCode &&
+              userLocation.nearestStopCode !== currentStopCode && (
+                <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 pt-3">
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3 flex items-center justify-between gap-3 shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-emerald-700 text-[20px]">
+                        near_me
+                      </span>
+                      <p className="text-xs font-bold text-emerald-950">
+                        Nearest Stop To Your Current GPS Location:{' '}
+                        <span className="font-extrabold text-[#d95e1e]">
+                          {userLocation.nearestStopName} ({userLocation.nearestStopCode})
+                        </span>{' '}
+                        • ~{userLocation.distanceToNearestStopMeters}m away
+                      </p>
+                    </div>
+                    <button
+                      onClick={() =>
+                        handleSelectStop(
+                          userLocation.nearestStopCode!,
+                          userLocation.nearestStopName
+                        )
+                      }
+                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shrink-0 transition cursor-pointer"
+                    >
+                      Switch Stop
+                    </button>
+                  </div>
+                </div>
+              )}
 
             {/* Main Stage Container */}
             <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-6">
@@ -323,6 +384,9 @@ export default function App() {
                 busInfo={liveBusInfo}
                 onSelectStop={(code) => handleSelectStop(code)}
                 onBusMarkerClick={() => setIsCrowdModalOpen(true)}
+                userLocation={userLocation}
+                isLiveGPS={isLiveGPS}
+                onLocateMe={handleLocateMe}
               />
 
               {/* Lower 2-column Grid: Stepper + Other Buses */}
@@ -359,6 +423,9 @@ export default function App() {
             onSelectBusStop={(code, name) => handleSelectStop(code, name)}
             onSelectBus={handleSelectBus}
             currentStopCode={currentStopCode}
+            userLocation={userLocation}
+            isLiveGPS={isLiveGPS}
+            onLocateMe={handleLocateMe}
           />
         )}
 

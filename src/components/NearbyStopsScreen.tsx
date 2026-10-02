@@ -1,20 +1,53 @@
 import React, { useState } from 'react';
 import { NEARBY_STOPS, BUS_DATABASE } from '../data/transitData';
+import { UserLocation } from '../types/transit';
+import { calculateDistanceMeters, formatDistance } from '../utils/geo';
 
 interface NearbyStopsScreenProps {
   onSelectBusStop: (stopCode: string, stopName: string) => void;
   onSelectBus: (busNum: string) => void;
   currentStopCode: string;
+  userLocation?: UserLocation | null;
+  isLiveGPS?: boolean;
+  onLocateMe?: () => void;
 }
 
 export const NearbyStopsScreen: React.FC<NearbyStopsScreenProps> = ({
   onSelectBusStop,
   onSelectBus,
   currentStopCode,
+  userLocation,
+  isLiveGPS,
+  onLocateMe,
 }) => {
   const [searchFilter, setSearchFilter] = useState('');
 
-  const filteredStops = NEARBY_STOPS.filter(
+  // Compute live distance if user location is available
+  const stopsWithDistances = NEARBY_STOPS.map((stop) => {
+    let distance = stop.distanceMeters;
+    let walkMins = stop.walkMinutes;
+
+    if (userLocation && stop.lat !== undefined && stop.lng !== undefined) {
+      distance = calculateDistanceMeters(
+        userLocation.latitude,
+        userLocation.longitude,
+        stop.lat,
+        stop.lng
+      );
+      walkMins = Math.max(1, Math.round(distance / 75));
+    }
+
+    return {
+      ...stop,
+      liveDistance: distance,
+      liveWalkMinutes: walkMins,
+    };
+  });
+
+  // Sort by live proximity
+  stopsWithDistances.sort((a, b) => a.liveDistance - b.liveDistance);
+
+  const filteredStops = stopsWithDistances.filter(
     (stop) =>
       stop.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
       stop.code.includes(searchFilter) ||
@@ -34,9 +67,25 @@ export const NearbyStopsScreen: React.FC<NearbyStopsScreenProps> = ({
               <h1 className="text-xl md:text-2xl font-black text-stone-900 tracking-tight">
                 Nearby Bus Stops
               </h1>
+              {isLiveGPS ? (
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                  Live GPS Sorted
+                </span>
+              ) : (
+                <button
+                  onClick={onLocateMe}
+                  className="text-[10px] font-bold bg-sky-100 text-sky-800 hover:bg-sky-200 px-2 py-0.5 rounded-full flex items-center gap-1 cursor-pointer transition"
+                >
+                  <span className="material-symbols-outlined text-[12px]">my_location</span>
+                  Use My GPS
+                </button>
+              )}
             </div>
             <p className="text-xs md:text-sm text-stone-600">
-              Real-time bus arrivals around Bishan-Ang Mo Kio district sorted by walking proximity
+              {isLiveGPS && userLocation
+                ? `Live device coordinates: ${userLocation.latitude.toFixed(4)}°N, ${userLocation.longitude.toFixed(4)}°E (±${Math.round(userLocation.accuracy)}m)`
+                : 'Real-time bus arrivals sorted by walking proximity'}
             </p>
           </div>
 
@@ -75,85 +124,69 @@ export const NearbyStopsScreen: React.FC<NearbyStopsScreenProps> = ({
                     <h3 className="text-base md:text-lg font-extrabold text-stone-900">
                       {stop.name}
                     </h3>
-                    <span className="text-xs font-bold text-[#d95e1e] bg-orange-100 px-2 py-0.5 rounded-full">
+                    <span className="text-xs font-black text-[#d95e1e] bg-orange-100 px-2 py-0.5 rounded-md">
                       {stop.code}
                     </span>
                     {isCurrent && (
-                      <span className="text-[10px] font-black uppercase tracking-wide bg-[#d95e1e] text-white px-2 py-0.5 rounded-full">
-                        You Are Here
+                      <span className="text-[10px] font-extrabold bg-[#d95e1e] text-white px-2 py-0.5 rounded-full uppercase">
+                        Current Selected Stop
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-stone-500 font-medium mt-0.5">{stop.road}</p>
+                  <p className="text-xs text-stone-500 mt-0.5 font-medium">{stop.road}</p>
                 </div>
 
                 <div className="text-right shrink-0">
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">directions_walk</span>
-                    ~{stop.walkMinutes} min ({stop.distanceMeters}m)
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-xs text-stone-600 mb-3 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[15px] text-amber-600">
-                  signpost
-                </span>
-                <span>{stop.landmark}</span>
-              </p>
-
-              {/* Serving Buses Chips */}
-              <div className="border-t border-orange-100 pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wide">
-                    Services &amp; Next Bus:
+                  <span className="text-xs md:text-sm font-black text-stone-800 flex items-center justify-end gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-emerald-600">
+                      directions_walk
+                    </span>
+                    {formatDistance(stop.liveDistance)} (~{stop.liveWalkMinutes} min)
                   </span>
                   {stop.sheltered && (
-                    <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-0.5">
-                      <span className="material-symbols-outlined text-[13px]">roofing</span>
-                      Sheltered Walkway
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full block mt-1">
+                      100% Sheltered Linkway
                     </span>
                   )}
                 </div>
+              </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {stop.services.map((busNum) => {
-                    const info = BUS_DATABASE[busNum];
-                    const nextEta = info?.arrivals[0]?.etaMinutes ?? 4;
+              <p className="text-xs text-stone-600 mb-4 bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px] text-[#d95e1e]">info</span>
+                <span>{stop.landmark}</span>
+              </p>
 
-                    return (
-                      <button
-                        key={busNum}
-                        onClick={() => {
-                          onSelectBus(busNum);
-                          onSelectBusStop(stop.code, stop.name);
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl bg-stone-50 hover:bg-orange-50 border border-stone-200 hover:border-[#d95e1e] transition flex items-center gap-2 text-left cursor-pointer group"
-                      >
-                        <span className="w-7 h-6 rounded-md bg-[#d95e1e] text-white flex items-center justify-center text-xs font-black group-hover:scale-105 transition-transform">
-                          {busNum}
-                        </span>
-                        <div>
-                          <span className="text-xs font-extrabold text-stone-900 block leading-tight">
-                            {nextEta} min
-                          </span>
-                          <span className="text-[9px] text-stone-500 block leading-none">
-                            Next arr
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
+              <div>
+                <p className="text-[11px] font-bold text-stone-500 uppercase tracking-wider mb-2">
+                  Serving Bus Services
+                </p>
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {stop.services.map((bus) => (
+                    <button
+                      key={bus}
+                      onClick={() => {
+                        onSelectBus(bus);
+                        onSelectBusStop(stop.code, stop.name);
+                      }}
+                      className="px-2.5 py-1 bg-white hover:bg-orange-50 border border-orange-200 rounded-lg text-xs font-extrabold text-[#d95e1e] transition shadow-2xs hover:scale-105 cursor-pointer"
+                    >
+                      Bus {bus}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-end">
+              <div className="pt-3 border-t border-orange-100 flex justify-end">
                 <button
                   onClick={() => onSelectBusStop(stop.code, stop.name)}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-[#d95e1e] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition flex items-center gap-1 cursor-pointer"
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    isCurrent
+                      ? 'bg-stone-900 text-white hover:bg-stone-800'
+                      : 'bg-[#d95e1e] text-white hover:bg-[#b34810]'
+                  }`}
                 >
-                  <span className="material-symbols-outlined text-[16px]">radar</span>
-                  <span>Inspect Stop Telemetry</span>
+                  <span className="material-symbols-outlined text-[16px]">sensors</span>
+                  {isCurrent ? 'Viewing Live Telemetry' : 'Switch To This Stop'}
                 </button>
               </div>
             </div>

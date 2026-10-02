@@ -62,6 +62,20 @@ export interface BusStop {
   walkMinutes: number;
   sheltered: boolean;
   services: string[];
+  lat?: number;
+  lng?: number;
+}
+
+export interface UserLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  timestamp: number;
+  nearestStopCode?: string;
+  nearestStopName?: string;
+  distanceToNearestStopMeters?: number;
+  isSimulated?: boolean;
+  inSingapore?: boolean;
 }
 
 export interface MRTStation {
